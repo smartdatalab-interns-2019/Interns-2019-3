@@ -29,25 +29,25 @@ def correlationCoeff(label, output):
 class CNNModel(nn.Module):
     def __init__(self):
         super(CNNModel, self).__init__()
-        # Hidden layers, use conv1d to process time series
+        # Hidden layers, use conv2d to process one 10 * 400 data matrix
         self.hidden1 = nn.Sequential(OrderedDict([
-            ("conv1", nn.Conv1d(in_channels=1, out_channels=16, kernel_size=5, stride=1, padding=2)),
+            ("conv1", nn.Conv2d(in_channels=1, out_channels=16, kernel_size=5, stride=1, padding=2)),
             ("relu1", nn.ReLU()),
-            ("pool1", nn.MaxPool1d(kernel_size=2))
+            ("pool1", nn.MaxPool2d(kernel_size=2))
         ]))
         self.hidden2 = nn.Sequential(OrderedDict([
-            ("conv2", nn.Conv1d(in_channels=16, out_channels=32, kernel_size=5, stride=1, padding=2)),
+            ("conv2", nn.Conv2d(in_channels=16, out_channels=32, kernel_size=3, stride=1, padding=1)),
             ("relu2", nn.ReLU()),
-            ("pool2", nn.MaxPool1d(kernel_size=2))
+            ("pool2", nn.MaxPool2d(kernel_size=2))
         ]))
         # Fully connected layer (readout)
-        self.fc = nn.Linear(32 * 200, 10)
+        self.fc = nn.Linear(32 * 2 * 100, 2)
     
     def forward(self, x):
         out = self.hidden1(x)
         out = self.hidden2(out)
         # Resize
-        # Original size: (128, 32, 200)
+        # Original size: (128, 32, 2 * 100)
         # out.size(0): 128
         # New out size: (128, 32*200)
         out = out.view(out.size(0), -1)
@@ -57,7 +57,7 @@ class CNNModel(nn.Module):
 
 
 # train CNN model in one epoch
-def train(model, iterator, optimizer, criterion, clip, device, correlationCoefficientList):
+def train(model, iterator, optimizer, criterion, clip, device):
     
     # set model to train mode
     model.train()
@@ -68,11 +68,12 @@ def train(model, iterator, optimizer, criterion, clip, device, correlationCoeffi
     for i, batch in enumerate(iterator):
         
         src = batch[0].to(device)   # data
+        src = torch.unsqueeze(src, dim=1)
         trg = batch[1].to(device)   # label
         
         res = model(src.float())
                  
-        loss = criterion(res.float(), trg.float())      # mean square error
+        loss = criterion(res.float(), trg.long())       # cross entropy loss
         optimizer.zero_grad()                           # clear gradients for this training step
         loss.backward()                                 # backpropagation, compute gradients
         torch.nn.utils.clip_grad_norm_(model.parameters(), clip)
@@ -80,17 +81,13 @@ def train(model, iterator, optimizer, criterion, clip, device, correlationCoeffi
         
         epoch_loss += loss.item()
         
-        if i % 20 == 0:
+        if i % 5 == 0:
             print("epoch loss:", epoch_loss)
 
-    corrcoefficient = correlationCoeff(trg.to('cpu').detach().numpy(), res.to('cpu').detach().numpy())
-    correlationCoefficientList.append(corrcoefficient[0])
-    print(corrcoefficient)
-          
-    return epoch_loss / len(iterator), correlationCoefficientList
+    return epoch_loss / len(iterator)
 
 
-def evaluate(model, iterator, criterion, device, correlationCoefficientList_eva):
+def evaluate(model, iterator, criterion, device):
     
     # set model to evaluation mode
     model.eval()
@@ -98,23 +95,29 @@ def evaluate(model, iterator, criterion, device, correlationCoefficientList_eva)
     # total loss of the epoch
     epoch_loss = 0
     
+    correct = 0.0
+    total = 0.0
+
     with torch.no_grad():
     
         for i, batch in enumerate(iterator):
         
             src = batch[0].to(device)
-            trg = batch[1].to(device)
+            src = torch.unsqueeze(src, dim=1)
+            trg = batch[1].long().to(device)
 
             res = model(src.float())
 
-            loss = criterion(res.float(), trg.float())
+            loss = criterion(res.float(), trg)
             epoch_loss += loss.item()
-            corrcoefficient = correlationCoeff(trg.to('cpu').detach().numpy(), res.to('cpu').detach().numpy())
-            correlationCoefficientList_eva.append(corrcoefficient[0])
-            
-        print(corrcoefficient)
-        
-    return epoch_loss / len(iterator), correlationCoefficientList_eva
+
+            _, predicted = torch.max(res, dim=1)
+            total += trg.size(0)
+            correct += (predicted == trg).sum().item()
+
+    accuracy = 100 * correct / total
+
+    return epoch_loss / len(iterator), accuracy
 
 
 def epoch_time(start_time, end_time):

@@ -37,7 +37,6 @@ def load_dataset(filename, if_save_dataset):
             dataset = pickle.load(handle)
             
         data_T = dataset['data']
-        label_T = dataset['label']
         Tag = dataset['tag']
         timestamp_T = dataset['timestamp']
         n_tag_0 = dataset['tag0']
@@ -64,7 +63,7 @@ def load_dataset(filename, if_save_dataset):
             with open(filename, 'wb') as handle:
                 pickle.dump(dataset, handle, protocol=pickle.HIGHEST_PROTOCOL)
                 
-    return data_T, label_T, Tag, timestamp_T, n_tag_0, n_tag_1, scale_norm, data_type
+    return data_T, Tag, timestamp_T, n_tag_0, n_tag_1, scale_norm, data_type
 
 
 def create_no_mass_index(data_mode, n_tag_0, n_tag_1):
@@ -109,23 +108,23 @@ DETECTION_ANOMALY = True
 
 DATA_TYPE = ['correlation coefficient', 'temperature', 'humidity']
 
-pt_filename = 'pt/cnn_' + DATA_MODE + '_1.pt'
+pt_filename = 'pt/cnn_2d_' + DATA_MODE + '.pt'
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 '''-------------------------------------------------------------------------'''
 '''------------------------- Load Data -------------------------------------'''
 '''-------------------------------------------------------------------------'''
+print("loading data")
+
 if Loading_DATA:
 
-    filename_preprocess_data = 'Data/plate_ultrasonic_dataset_197_process_' + DATA_MODE + '.pickle'
+    filename_preprocess_data = 'Data/plate_ultrasonic_dataset_197_process_' + DATA_MODE + '_cnn.pickle'
     
-    data_T, label_T, Tag, timestamp_T, n_tag_0, n_tag_1, scale_norm, data_type = load_dataset(filename=filename_preprocess_data, if_save_dataset=SAVE_CREATED_DATA)
-    # special process for cnn
-    Tag = np.concatenate((Tag, np.zeros(n_tag_0), np.ones(n_tag_1)), axis = 0)
-    Tag = np.concatenate((Tag, np.zeros(n_tag_0), np.ones(n_tag_1)), axis = 0)
+    data_T, label_T, timestamp_T, n_tag_0, n_tag_1, scale_norm, data_type = \
+        load_dataset(filename=filename_preprocess_data, if_save_dataset=SAVE_CREATED_DATA)
 
-    # decide whether data with mass need to be rid
+    # decide whether data with mass need to be rid of
     if WITH_MASS_LABEL:
     
         train_input, validation_input, train_label, validation_label, data_type_train, data_type_test = \
@@ -149,27 +148,30 @@ if Loading_DATA:
 '''-------------------------------------------------------------------------'''
 '''------------------------------ create model -----------------------------'''
 '''-------------------------------------------------------------------------'''
+print("creating model")
+
 cnn = CNN.CNNModel().to(device)
 optimizer = torch.optim.Adam(cnn.parameters(), lr=LR)
 loss_func = nn.CrossEntropyLoss()
 
 loss_record = []
-correlationCoefficientList = []
-correlationCoefficientList_eva = []
 
 '''-------------------------------------------------------------------------'''
 '''---------------------------- train model --------------------------------'''
 '''-------------------------------------------------------------------------'''
+print("training model")
+
 if TRAIN:
 
-    cnn.load_state_dict(torch.load(pt_filename))
+    if os.path.isfile(pt_filename):
+        cnn.load_state_dict(torch.load(pt_filename))
     best_valid_loss = float('inf')
        
     for epoch in range(EPOCH):
         start_time = time.time()
         
-        train_loss, correlationCoefficientList = CNN.train(cnn, train_loader, optimizer, loss_func, CLIP, device, correlationCoefficientList)
-        valid_loss, correlationCoefficientList_eva = CNN.evaluate(cnn, validation_loader, loss_func, device, correlationCoefficientList_eva)
+        train_loss = CNN.train(cnn, train_loader, optimizer, loss_func, CLIP, device)
+        valid_loss, accuracy = CNN.evaluate(cnn, validation_loader, loss_func, device)
         
         end_time = time.time()
         
@@ -180,7 +182,77 @@ if TRAIN:
             torch.save(cnn.state_dict(), pt_filename)
         
         print(f'Epoch: {epoch+1:02} | Time: {epoch_mins}m {epoch_secs}s')
-        print(f'\tTrain Loss: {train_loss:.3f} | Train PPL: {math.exp(train_loss):7.3f}')
-        print(f'\t Val. Loss: {valid_loss:.3f} |  Val. PPL: {math.exp(valid_loss):7.3f}')
+        print(f'\tTrain Loss: {train_loss:.5f} | Train PPL: {math.exp(train_loss):7.3f}')
+        print(f'\t Val. Loss: {valid_loss:.5f} |  Val. PPL: {math.exp(valid_loss):7.3f}')
+        print(f"\tAccuracy: {accuracy:.5f}%")
     
         loss_record.append([train_loss, valid_loss])
+
+'''-------------------------------------------------------------------------'''
+'''---------------------- evaluate the model -------------------------------'''
+'''-------------------------------------------------------------------------'''
+if EVALUATE:
+
+    cnn.load_state_dict(torch.load(pt_filename))
+    
+    evaluate_data_index = np.random.randint(validation_input.shape[0], size = 64)
+    
+    evaluation_data = validation_input[evaluate_data_index]
+    encoded_data_eva, decoded_data_eva = autoencoder(evaluation_data.to(device).float())
+    
+    if DATA_MODE == 'predict_input':
+        
+        data1 = data_type_test[evaluate_data_index]
+        
+    elif DATA_MODE == 'predict_temperature':
+        
+        data1 = np.ones(64).astype('int')
+        
+    elif DATA_MODE == 'predict_humidity':
+        
+        data1 = 2 * np.ones(64).astype('int')
+        
+    recovered_validation_data = denormalized_data(validation_label[evaluate_data_index].numpy(), \
+                                                  scale_norm, data_type1 = data1)
+    recovered_validation_data_decoded = denormalized_data(decoded_data_eva.data.to('cpu').detach().numpy(), \
+                                                          scale_norm, data_type1 = data1)
+'''
+    for i in range(64):
+    
+        plt.ion()
+        
+        fig = plt.figure(figsize = (10,8))
+        ax = fig.add_subplot(211)
+        #ax.plot(timestamp_T[1,:], validation_label[i].numpy())
+        ax.plot(timestamp_T[i,:], recovered_validation_data[i], label = "true curve")
+        ax.set_ylabel(DATA_TYPE[data_type_test[i]], fontsize = 15)
+        ax.set_xlabel("time", fontsize = 15)        
+        ax.set_title("the change of "+ DATA_TYPE[data_type_test[i]] + " in one measurement file", fontsize = 15)
+        ax.legend(loc = "upper right")
+        ax = fig.add_subplot(212)
+        #ax.plot(timestamp_T[1,:], decoded_data_eva.data.to('cpu').detach().numpy()[i])
+        ax.plot(timestamp_T[i,:], recovered_validation_data_decoded[i], label = "predicted curve")
+        ax.set_title("the change of predicted "+ DATA_TYPE[data_type_test[i]] + " in one measurement file", fontsize = 15)
+        ax.set_ylabel(DATA_TYPE[data_type_test[i]], fontsize = 15)
+        ax.set_xlabel("time", fontsize = 15)
+        ax.legend(loc = "upper right")
+        plt.subplots_adjust(wspace = 0.1, hspace = 0.25)
+
+        plt.pause(2)
+        # plt.savefig('D:/Research/DeepLearning/Results/autoencoder/predict_temperature' + str(i) +'.png')
+        plt.close()
+      
+    plt.figure(2)
+    plt.plot(loss_record)
+    plt.title("the change of loss in each epoch")
+    plt.xlabel("epoch")
+    plt.ylabel("loss")
+    plt.show()
+    
+    plt.figure(3)
+    plt.plot(correlationCoefficientList_eva)
+    plt.title("correlation coefficient between input and output in one bach")
+    plt.xlabel("measurement")
+    plt.ylabel("correlation coefficient")
+    plt.show()
+'''
