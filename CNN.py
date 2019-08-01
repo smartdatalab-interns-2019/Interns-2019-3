@@ -120,7 +120,7 @@ def train(model, iterator, optimizer, criterion, clip, device):
     return epoch_loss / len(iterator)
 
 
-def evaluate(model, iterator, criterion, device, epoch):
+def evaluate(model, iterator, criterion, device, epoch, network_type):
     
     # set model to evaluation mode
     model.eval()
@@ -166,9 +166,9 @@ def evaluate(model, iterator, criterion, device, epoch):
     # get result of the first and last epoch
     if (epoch == 0 or epoch == 59):
         pcm.plot_confusion_matrix(target_total, predicted_total, np.array(["no mass", "mass"]))
-        plt.savefig('Results/cnn_epoch' + str(epoch + 1) + '_result.png')
+        plt.savefig('Results/CNN_' + network_type + '_epoch' + str(epoch + 1) + '_result.png')
         pcm.plot_confusion_matrix(target_total, predicted_total, np.array(["no mass", "mass"]), normalize=True)
-        plt.savefig('Results/cnn_epoch' + str(epoch + 1) + '_normalized_result.png')
+        plt.savefig('Results/CNN_' + network_type + '_epoch' + str(epoch + 1) + '_normalized_result.png')
         plt.clf()
 
     return epoch_loss / len(iterator), accuracy, precision, recall

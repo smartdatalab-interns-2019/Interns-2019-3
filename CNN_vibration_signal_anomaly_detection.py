@@ -100,11 +100,13 @@ CLIP = 1
 BASELINE_FILE = 197
 BASELINE_MEASUREMENT = 1
 
+NETWORK_TYPE = "1D"
+
 SAVE_CREATED_DATA = True
 TRAIN = True
 EVALUATE = False
 
-pt_filename = 'pt/cnn_2d_predict_input.pt'
+pt_filename = 'pt/CNN_' + NETWORK_TYPE + '_predict_input.pt'
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -134,7 +136,10 @@ validation_loader = torch.utils.data.DataLoader(validation_data, batch_size=BATC
 '''-------------------------------------------------------------------------'''
 print("creating model")
 
-cnn = CNN.CNNModel2D().to(device)
+if (NETWORK_TYPE == "2D"):
+    cnn = CNN.CNNModel2D().to(device)
+elif (NETWORK_TYPE == "1D"):
+    cnn = CNN.CNNModel2D().to(device)
 optimizer = torch.optim.Adam(cnn.parameters(), lr=LR)
 loss_func = nn.CrossEntropyLoss()
 
@@ -156,7 +161,7 @@ if TRAIN:
         start_time = time.time()
         
         train_loss = CNN.train(cnn, train_loader, optimizer, loss_func, CLIP, device)
-        valid_loss, _, _, _ = CNN.evaluate(cnn, validation_loader, loss_func, device, epoch)
+        valid_loss, _, _, _ = CNN.evaluate(cnn, validation_loader, loss_func, device, epoch, NETWORK_TYPE)
         
         end_time = time.time()
         
@@ -176,7 +181,7 @@ if TRAIN:
     plt.title("the change of validation loss in each epoch")
     plt.xlabel("epoch")
     plt.ylabel("validation loss")
-    plt.savefig('Results/cnn_validation_loss_change.png')
+    plt.savefig('Results/CNN_' + NETWORK_TYPE + '_validation_loss_change.png')
 
 '''-------------------------------------------------------------------------'''
 '''---------------------- evaluate the model -------------------------------'''
@@ -188,7 +193,7 @@ if EVALUATE:
 
     start_time = time.time()
     
-    valid_loss, accuracy, precision, recall = CNN.evaluate(cnn, validation_loader, loss_func, device, 59)
+    valid_loss, accuracy, precision, recall = CNN.evaluate(cnn, validation_loader, loss_func, device, 59, NETWORK_TYPE)
     
     end_time = time.time()
     
