@@ -10,7 +10,9 @@ import time
 from sklearn.model_selection import train_test_split
 
 import create_data_for_CNN
-import CNN
+
+import CNN                  # supervised
+import CNN_unsupervised     # unsupervised
 
 '''-------------------------------------------------------------------------'''
 '''------------------------------- function --------------------------------'''
@@ -100,11 +102,12 @@ CLIP = 1
 BASELINE_FILE = 197
 BASELINE_MEASUREMENT = 1
 
-NETWORK_TYPE = "1D"
+SUPERVISED = False
+NETWORK_TYPE = "2D_unsupervised"
 
 SAVE_CREATED_DATA = True
-TRAIN = True
-EVALUATE = False
+TRAIN = False
+EVALUATE = True
 
 pt_filename = 'pt/CNN_' + NETWORK_TYPE + '_predict_input.pt'
 
@@ -118,11 +121,15 @@ print("loading data")
 data_T, label_T, timestamp_T, n_tag_0, n_tag_1, scale_norm, data_type = \
     load_dataset('Data/plate_ultrasonic_dataset_197_process_predict_input_cnn.pickle', save_dataset=SAVE_CREATED_DATA)
 
-train_input, validation_input, train_label, validation_label, data_type_train, data_type_test = \
-    train_test_split(data_T, label_T, data_type, test_size=0.2)
+train_input, validation_input, train_label, validation_label = \
+    train_test_split(data_T, label_T, test_size=0.2)
 
-train_input = torch.from_numpy(train_input)
-train_label = torch.from_numpy(train_label)
+if SUPERVISED:
+    train_input = torch.from_numpy(train_input)
+    train_label = torch.from_numpy(train_label)
+else:
+    train_input = torch.from_numpy(data_T[0:n_tag_0])
+    train_label = torch.from_numpy(label_T[0:n_tag_0])
 train_data = torch.utils.data.TensorDataset(train_input, train_label)
 train_loader = torch.utils.data.DataLoader(train_data, batch_size=BATCH_SIZE, shuffle=True)
     
@@ -136,12 +143,19 @@ validation_loader = torch.utils.data.DataLoader(validation_data, batch_size=BATC
 '''-------------------------------------------------------------------------'''
 print("creating model")
 
-if (NETWORK_TYPE == "2D"):
-    cnn = CNN.CNNModel2D().to(device)
-elif (NETWORK_TYPE == "1D"):
-    cnn = CNN.CNNModel2D().to(device)
-optimizer = torch.optim.Adam(cnn.parameters(), lr=LR)
-loss_func = nn.CrossEntropyLoss()
+cnn = None
+if SUPERVISED:
+    if (NETWORK_TYPE == "2D"):
+        cnn = CNN.CNNModel2D().to(device)
+    elif (NETWORK_TYPE == "1D"):
+        cnn = CNN.CNNModel2D().to(device)
+    optimizer = torch.optim.Adam(cnn.parameters(), lr=LR)
+    loss_func = nn.CrossEntropyLoss()
+else:
+    if (NETWORK_TYPE == "2D_unsupervised"):
+        cnn = CNN_unsupervised.CNNModel().to(device)
+    optimizer = torch.optim.Adam(cnn.parameters(), lr=LR)
+    loss_func = nn.MSELoss()
 
 # validation loss of every epoch
 loss_record = []
@@ -160,12 +174,19 @@ if TRAIN:
     for epoch in range(EPOCH):
         start_time = time.time()
         
-        train_loss = CNN.train(cnn, train_loader, optimizer, loss_func, CLIP, device)
-        valid_loss, _, _, _ = CNN.evaluate(cnn, validation_loader, loss_func, device, epoch, NETWORK_TYPE)
-        
+        if SUPERVISED:
+            train_loss = CNN.train(cnn, train_loader, optimizer, loss_func, CLIP, device)
+            valid_loss, _, _, _ = CNN.evaluate(cnn, validation_loader, loss_func, device, epoch, NETWORK_TYPE)
+        else:
+            train_loss = CNN_unsupervised.train(cnn, train_loader, optimizer, loss_func, CLIP, device)
+            valid_loss, _, _, _ = CNN_unsupervised.evaluate(cnn, validation_loader, loss_func, device, epoch, NETWORK_TYPE)
+            
         end_time = time.time()
         
-        epoch_mins, epoch_secs = CNN.epoch_time(start_time, end_time)
+        if SUPERVISED:
+            epoch_mins, epoch_secs = CNN.epoch_time(start_time, end_time)
+        else:
+            epoch_mins, epoch_secs = CNN_unsupervised.epoch_time(start_time, end_time)
         
         if valid_loss < best_valid_loss:
             best_valid_loss = valid_loss
@@ -193,14 +214,19 @@ if EVALUATE:
 
     start_time = time.time()
     
-    valid_loss, accuracy, precision, recall = CNN.evaluate(cnn, validation_loader, loss_func, device, 59, NETWORK_TYPE)
+    if SUPERVISED:
+        valid_loss, accuracy, precision, recall = CNN.evaluate(cnn, validation_loader, loss_func, device, 59, NETWORK_TYPE)
+    else:
+        valid_loss, accuracy, precision, recall = CNN_unsupervised.evaluate(cnn, validation_loader, loss_func, device, 59, NETWORK_TYPE)
     
     end_time = time.time()
     
-    epoch_mins, epoch_secs = CNN.epoch_time(start_time, end_time)
+    if SUPERVISED:
+        epoch_mins, epoch_secs = CNN.epoch_time(start_time, end_time)
+    else:
+        epoch_mins, epoch_secs = CNN_unsupervised.epoch_time(start_time, end_time)
     
-    print(f'Epoch: {epoch+1:02} | Time: {epoch_mins}m {epoch_secs}s')
-    print(f'\tTrain Loss: {train_loss:.5f}')
+    print(f'Epoch: 60 | Time: {epoch_mins}m {epoch_secs}s')
     print(f'\tValid Loss: {valid_loss:.5f}')
     print(f"\tAccuracy: {accuracy:.5f}%")
     print(f"\tPrecision: {precision:.5f}%")

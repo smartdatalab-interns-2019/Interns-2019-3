@@ -13,7 +13,7 @@ import plot_confusion_matrix as pcm
 import matplotlib.pyplot as plt
 
 
-class CNNModel2D(nn.Module):
+class CNNModel(nn.Module):
     """A simple CNN with 2D convolutional layer
 
     Attributes:
@@ -21,7 +21,7 @@ class CNNModel2D(nn.Module):
         forward: Pass input to the network and get results from readout layer
     """
     def __init__(self):
-        super(CNNModel2D, self).__init__()
+        super(CNNModel, self).__init__()
         # Hidden layers, use conv2d to process one 10 * 400 data matrix
         self.hidden1 = nn.Sequential(OrderedDict([
             ("conv1", nn.Conv2d(in_channels=1, out_channels=16, kernel_size=5, stride=1, padding=2)),
@@ -35,8 +35,8 @@ class CNNModel2D(nn.Module):
         ]))
         # Fully connected layer (readout), receive output of 32(channels)*2(height)*100(width)
         # The height of the output should be 2 since pooling layer rounds down output's shape
-        # Output arrays consisting 2 elements, representing 2 classes
-        self.fc = nn.Linear(32 * 2 * 100, 2)
+        # Output a scalar implying the possibility of existence of mass
+        self.fc = nn.Linear(32 * 2 * 100, 1)
     
     def forward(self, x):
         out = self.hidden1(x)
@@ -47,44 +47,6 @@ class CNNModel2D(nn.Module):
         # New out size: (128, 32 * 2 * 100)
         out = out.view(out.size(0), -1)
 
-        out = self.fc(out)
-        return out
-
-
-class CNNModel1D(nn.Module):
-    """A simple CNN with 1D convolutional layer
-
-    Attributes:
-        __init__: Create CNN with 2 hidden layers
-        forward: Pass input to the network and get results from readout layer
-    """
-    def __init__(self):
-        super(CNNModel1D, self).__init__()
-        # Hidden layers, use conv1d to process one 10 * 400 data matrix
-        # Since 10 means numbers of properties and 400 means number of time points,
-        # the matrix can be processed as a 10-channel time series
-        self.hidden1 = nn.Sequential(OrderedDict([
-            ("conv1", nn.Conv1d(in_channels=10, out_channels=16, kernel_size=5, stride=1, padding=2)),
-            ("relu1", nn.ReLU()),
-            ("pool1", nn.MaxPool1d(kernel_size=2))
-        ]))
-        self.hidden2 = nn.Sequential(OrderedDict([
-            ("conv2", nn.Conv1d(in_channels=16, out_channels=32, kernel_size=5, stride=1, padding=2)),
-            ("relu2", nn.ReLU()),
-            ("pool2", nn.MaxPool1d(kernel_size=2))
-        ]))
-        # Fully connected layer (readout)
-        self.fc = nn.Linear(32 * 100, 2)
-    
-    def forward(self, x):
-        out = self.hidden1(x)
-        out = self.hidden2(out)
-        # Resize
-        # Original size: (128, 32 * 100)
-        # out.size(0): 128
-        # New out size: (128, 32 * 100)
-        out = out.view(out.size(0), -1)
-        # Linear function (readout)
         out = self.fc(out)
         return out
 
@@ -100,13 +62,13 @@ def train(model, iterator, optimizer, criterion, clip, device):
     
     for i, batch in enumerate(iterator):
         
-        src = batch[0].to(device)           # data of shape (128, 10, 400)
-        src = torch.unsqueeze(src, dim=1)   # add channel dimension (becomes(128, 1, 10, 400))
-        trg = batch[1].to(device)           # label
+        src = batch[0].to(device)               # data of shape (128, 10, 400)
+        src = torch.unsqueeze(src, dim=1)       # add channel dimension (becomes(128, 1, 10, 400))
+        trg = batch[1].to(device)               # label
         
-        res = model(src.float())
+        res = model(src.float()).view(-1)       # reshape result from (128, 1) to (128) to match target shape
                  
-        loss = criterion(res.float(), trg.long())       # cross entropy loss
+        loss = criterion(res.float(), trg.float())      # MSE loss
         optimizer.zero_grad()                           # clear gradients for this training step
         loss.backward()                                 # backpropagation, compute gradients
         torch.nn.utils.clip_grad_norm_(model.parameters(), clip)
@@ -127,6 +89,9 @@ def evaluate(model, iterator, criterion, device, epoch, network_type):
     
     # total loss of the epoch
     epoch_loss = 0
+
+    # threshold of two kinds of data
+    threshold = torch.tensor(0.3).to(device)
     
     tp = 0.0
     tn = 0.0
@@ -141,18 +106,26 @@ def evaluate(model, iterator, criterion, device, epoch, network_type):
             src = torch.unsqueeze(src, dim=1)
             trg = batch[1].long().to(device)
 
-            res = model(src.float())
+            res = model(src.float()).view(-1)   # reshape from (128, 1) to (128) to match target shape
 
             # average loss of a batch
-            loss = criterion(res.float(), trg)
+            loss = criterion(res.float(), trg.float())
             epoch_loss += loss.item()
 
-            # take no mass as positive for convenience of unsupervised version
-            _, predicted = torch.max(res, dim=1)
-            tp += ((predicted == 1) & (trg == 1)).sum().item()
-            tn += ((predicted == 0) & (trg == 0)).sum().item()
-            fn += ((predicted == 0) & (trg == 1)).sum().item()
-            fp += ((predicted == 1) & (trg == 0)).sum().item()
+            # take no mass as positive for convenience
+            predicted = torch.ones(res.size()[0]).to(device)
+            for i in range(res.size()[0]):
+                if (torch.abs(res[i] - trg[i]) >= threshold):
+                    predicted[i] = 0
+
+            print("res: ", res)
+            print("predicted: ", predicted)
+            print("target: ", trg)
+            print("parameters:", list(model.parameters()))
+            tp += ((predicted == 0) & (trg == 0)).sum().item()
+            tn += ((predicted == 1) & (trg == 1)).sum().item()
+            fp += ((predicted == 0) & (trg == 1)).sum().item()
+            fn += ((predicted == 1) & (trg == 0)).sum().item()
             predicted_total = np.concatenate([predicted_total, predicted.cpu().numpy()])
             target_total = np.concatenate([target_total, trg.cpu().numpy()])
 

@@ -40,7 +40,7 @@ def plot_confusion_matrix(y_true, y_pred, classes,
     ax.set(xticks=np.arange(cm.shape[1]),
            yticks=np.arange(cm.shape[0]),
            # ... and label them with the respective list entries
-           xticklabels = classes, yticklabels = classes,
+           xticklabels=classes, yticklabels=classes,
            title=title,
            ylabel='True label',
            xlabel='Predicted label')
@@ -61,8 +61,7 @@ def plot_confusion_matrix(y_true, y_pred, classes,
     return ax
 
 
-
-if __name__ == "__main__":  
+if __name__ == "__main__":
 
     """
     ================
@@ -104,7 +103,7 @@ if __name__ == "__main__":
     # Run classifier, using a model that is too regularized (C too low) to see
     # the impact on the results
     classifier = svm.SVC(kernel='linear', C=0.01)
-    y_pred = classifier.fit(X_train, y_train).predict(X_test)   
+    y_pred = classifier.fit(X_train, y_train).predict(X_test)
         
     np.set_printoptions(precision=2)
     
