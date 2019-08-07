@@ -106,8 +106,8 @@ SUPERVISED = False
 NETWORK_TYPE = "2D_unsupervised"
 
 SAVE_CREATED_DATA = True
-TRAIN = False
-EVALUATE = True
+TRAIN = True
+EVALUATE = not TRAIN
 
 pt_filename = 'pt/CNN_' + NETWORK_TYPE + '_predict_input.pt'
 
@@ -148,7 +148,7 @@ if SUPERVISED:
     if (NETWORK_TYPE == "2D"):
         cnn = CNN.CNNModel2D().to(device)
     elif (NETWORK_TYPE == "1D"):
-        cnn = CNN.CNNModel2D().to(device)
+        cnn = CNN.CNNModel1D().to(device)
     optimizer = torch.optim.Adam(cnn.parameters(), lr=LR)
     loss_func = nn.CrossEntropyLoss()
 else:
@@ -166,11 +166,12 @@ loss_record = []
 print("training model")
 
 if TRAIN:
-
+    '''
     if os.path.isfile(pt_filename):
         cnn.load_state_dict(torch.load(pt_filename))
+    '''
     best_valid_loss = float('inf')
-       
+   
     for epoch in range(EPOCH):
         start_time = time.time()
         
@@ -188,9 +189,9 @@ if TRAIN:
         else:
             epoch_mins, epoch_secs = CNN_unsupervised.epoch_time(start_time, end_time)
         
-        if valid_loss < best_valid_loss:
-            best_valid_loss = valid_loss
-            torch.save(cnn.state_dict(), pt_filename)
+        # if valid_loss < best_valid_loss:
+        #     best_valid_loss = valid_loss
+        torch.save(cnn.state_dict(), pt_filename)
         
         print(f'Epoch: {epoch+1:02} | Time: {epoch_mins}m {epoch_secs}s')
         print(f'\tTrain Loss: {train_loss:.5f}')

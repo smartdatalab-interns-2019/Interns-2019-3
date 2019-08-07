@@ -91,7 +91,7 @@ def evaluate(model, iterator, criterion, device, epoch, network_type):
     epoch_loss = 0
 
     # threshold of two kinds of data
-    threshold = torch.tensor(0.3).to(device)
+    threshold = torch.tensor(0.01).to(device)
     
     tp = 0.0
     tn = 0.0
@@ -113,19 +113,18 @@ def evaluate(model, iterator, criterion, device, epoch, network_type):
             epoch_loss += loss.item()
 
             # take no mass as positive for convenience
-            predicted = torch.ones(res.size()[0]).to(device)
+            predicted = torch.ones(res.size()[0]).long().to(device)
             for i in range(res.size()[0]):
-                if (torch.abs(res[i] - trg[i]) >= threshold):
+                if (torch.abs(res[i] - torch.tensor(1).to(device)) >= threshold):
                     predicted[i] = 0
 
-            print("res: ", res)
-            print("predicted: ", predicted)
-            print("target: ", trg)
-            print("parameters:", list(model.parameters()))
-            tp += ((predicted == 0) & (trg == 0)).sum().item()
-            tn += ((predicted == 1) & (trg == 1)).sum().item()
-            fp += ((predicted == 0) & (trg == 1)).sum().item()
-            fn += ((predicted == 1) & (trg == 0)).sum().item()
+            # print("res: ", res)
+            # print("predicted: ", predicted)
+            # print("target: ", trg)
+            tp += ((predicted == 1) & (trg == 1)).sum().item()
+            tn += ((predicted == 0) & (trg == 0)).sum().item()
+            fn += ((predicted == 0) & (trg == 1)).sum().item()
+            fp += ((predicted == 1) & (trg == 0)).sum().item()
             predicted_total = np.concatenate([predicted_total, predicted.cpu().numpy()])
             target_total = np.concatenate([target_total, trg.cpu().numpy()])
 
