@@ -174,6 +174,60 @@ def evaluate(model, iterator, criterion, device, epoch, network_type):
     return epoch_loss / len(iterator), accuracy, precision, recall
 
 
+def evaluate_plot(model, iterator, criterion, device, epoch, network_type):
+    
+    # set model to evaluation mode
+    model.eval()
+    
+    # total loss of the epoch
+    epoch_loss = 0
+    
+    tp = 0.0
+    tn = 0.0
+    fp = 0.0
+    fn = 0.0
+    predicted_total = np.array([])
+    target_total = np.array([])
+
+    with torch.no_grad():
+        for i, batch in enumerate(iterator):
+            src = batch[0].to(device)
+            src = torch.unsqueeze(src, dim=1)
+            trg = batch[1].long().to(device)
+
+            res = model(src.float())
+
+            # average loss of a batch
+            loss = criterion(res.float(), trg)
+            epoch_loss += loss.item()
+
+            # take no mass as positive for convenience of unsupervised version
+            _, predicted = torch.max(res, dim=1)
+            tp += ((predicted == 1) & (trg == 1)).sum().item()
+            tn += ((predicted == 0) & (trg == 0)).sum().item()
+            fn += ((predicted == 0) & (trg == 1)).sum().item()
+            fp += ((predicted == 1) & (trg == 0)).sum().item()
+            predicted_total = np.concatenate([predicted_total, predicted.cpu().numpy()])
+            target_total = np.concatenate([target_total, trg.cpu().numpy()])
+
+    precision = 100 * tp / (tp + fp)
+    recall = 100 * tp / (tp + fn)
+    accuracy = 100 * (tp + tn) / (tp + fp + tn + fn)
+    
+    predicted_total = predicted_total.astype("int32")
+    target_total = target_total.astype("int32")
+
+    # get result of the first and last epoch
+    if (epoch == 0 or epoch == 59):
+        pcm.plot_confusion_matrix(target_total, predicted_total, np.array(["mass", "no mass"]))
+        plt.savefig('Results/CNN_' + network_type + '_epoch' + str(epoch + 1) + '_result.png')
+        pcm.plot_confusion_matrix(target_total, predicted_total, np.array(["mass", "no mass"]), normalize=True)
+        plt.savefig('Results/CNN_' + network_type + '_epoch' + str(epoch + 1) + '_normalized_result.png')
+        plt.clf()
+
+    return epoch_loss / len(iterator), accuracy, precision, recall
+
+
 def epoch_time(start_time, end_time):
     elapsed_time = end_time - start_time
     elapsed_mins = int(elapsed_time / 60)

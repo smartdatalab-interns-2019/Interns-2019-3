@@ -113,14 +113,79 @@ def evaluate(model, iterator, criterion, device, epoch, network_type):
             epoch_loss += loss.item()
 
             # take no mass as positive for convenience
-            predicted = torch.ones(res.size()[0]).long().to(device)
+            predicted = torch.ones(res.size()[0], dtype=torch.float).long().to(device)
             for i in range(res.size()[0]):
                 if (torch.abs(res[i] - torch.tensor(1).to(device)) >= threshold):
                     predicted[i] = 0
 
-            # print("res: ", res)
-            # print("predicted: ", predicted)
-            # print("target: ", trg)
+            tp += ((predicted == 1) & (trg == 1)).sum().item()
+            tn += ((predicted == 0) & (trg == 0)).sum().item()
+            fn += ((predicted == 0) & (trg == 1)).sum().item()
+            fp += ((predicted == 1) & (trg == 0)).sum().item()
+            predicted_total = np.concatenate([predicted_total, predicted.cpu().numpy()])
+            target_total = np.concatenate([target_total, trg.cpu().numpy()])
+
+    precision = 100 * tp / (tp + fp)
+    recall = 100 * tp / (tp + fn)
+    accuracy = 100 * (tp + tn) / (tp + fp + tn + fn)
+    f1 = 2 * precision * recall / (precision + recall)
+    
+    predicted_total = predicted_total.astype("int32")
+    target_total = target_total.astype("int32")
+
+    # get result of the first and last epoch
+    if (epoch == 0 or epoch == 59):
+        pcm.plot_confusion_matrix(target_total, predicted_total, np.array(["mass", "no mass"]))
+        plt.savefig('Results/CNN_' + network_type + '_epoch' + str(epoch + 1) + '_result.png')
+        pcm.plot_confusion_matrix(target_total, predicted_total, np.array(["mass", "no mass"]), normalize=True)
+        plt.savefig('Results/CNN_' + network_type + '_epoch' + str(epoch + 1) + '_normalized_result.png')
+        plt.clf()
+
+    return epoch_loss / len(iterator), accuracy, precision, recall, f1
+
+
+def evaluate_complete(model, iterator, criterion, device, epoch, network_type, timestamps):
+    
+    # set model to evaluation mode
+    model.eval()
+    
+    # total loss of the epoch
+    epoch_loss = 0
+
+    # threshold of two kinds of data
+    threshold = torch.tensor(0.01).to(device)
+    
+    tp = 0.0
+    tn = 0.0
+    fp = 0.0
+    fn = 0.0
+    tp_time = []
+    tn_time = []
+    fp_time = []
+    fn_time = []
+    timestamps = timestamps[:, 0, 0]
+    predicted_total = np.array([])
+    target_total = np.array([])
+
+    with torch.no_grad():
+        for i, batch in enumerate(iterator):
+            src = batch[0].to(device)
+            src = torch.unsqueeze(src, dim=1)
+            trg = batch[1].long().to(device)
+
+            res = model(src.float()).view(-1)   # reshape from (128, 1) to (128) to match target shape
+            print(res)
+
+            # average loss of a batch
+            loss = criterion(res.float(), trg.float())
+            epoch_loss += loss.item()
+
+            # take no mass as positive for convenience
+            predicted = torch.ones(res.size()[0]).long().to(device)
+            for j in range(res.size()[0]):
+                if (torch.abs(res[j] - torch.tensor(1).to(device)) >= threshold):
+                    predicted[j] = 0
+
             tp += ((predicted == 1) & (trg == 1)).sum().item()
             tn += ((predicted == 0) & (trg == 0)).sum().item()
             fn += ((predicted == 0) & (trg == 1)).sum().item()
@@ -135,8 +200,30 @@ def evaluate(model, iterator, criterion, device, epoch, network_type):
     predicted_total = predicted_total.astype("int32")
     target_total = target_total.astype("int32")
 
+    for i in range(len(timestamps)):
+        if (predicted_total[i] == target_total[i]):
+            if (predicted_total[i] == 1):
+                tp_time.append(timestamps[i])
+            else:
+                tn_time.append(timestamps[i])
+        elif (predicted_total[i] > target_total[i]):
+            fp_time.append(timestamps[i])
+        else:
+            fn_time.append(timestamps[i])
+
     # get result of the first and last epoch
     if (epoch == 0 or epoch == 59):
+        plt.subplot(211)
+        plt.title("targets")
+        plt.plot(timestamps, target_total, 'bo')
+        plt.subplot(212)
+        plt.title("prediction")
+        plt.plot(tp_time, np.ones(len(tp_time)), 'ro', label="tp")
+        plt.plot(tn_time, np.zeros(len(tn_time)), 'yo', label="tn")
+        plt.plot(fp_time, np.ones(len(fp_time)), 'go', label="fp")
+        plt.plot(fn_time, np.zeros(len(fn_time)), 'co', label="fn")
+        plt.legend()
+        plt.savefig("Results/CNN_" + network_type + "_epoch" + str(epoch + 1) + "_prediction_target.png")
         pcm.plot_confusion_matrix(target_total, predicted_total, np.array(["mass", "no mass"]))
         plt.savefig('Results/CNN_' + network_type + '_epoch' + str(epoch + 1) + '_result.png')
         pcm.plot_confusion_matrix(target_total, predicted_total, np.array(["mass", "no mass"]), normalize=True)

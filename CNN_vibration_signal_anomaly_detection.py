@@ -106,7 +106,7 @@ SUPERVISED = False
 NETWORK_TYPE = "2D_unsupervised"
 
 SAVE_CREATED_DATA = True
-TRAIN = True
+TRAIN = False
 EVALUATE = not TRAIN
 
 pt_filename = 'pt/CNN_' + NETWORK_TYPE + '_predict_input.pt'
@@ -121,22 +121,28 @@ print("loading data")
 data_T, label_T, timestamp_T, n_tag_0, n_tag_1, scale_norm, data_type = \
     load_dataset('Data/plate_ultrasonic_dataset_197_process_predict_input_cnn.pickle', save_dataset=SAVE_CREATED_DATA)
 
-train_input, validation_input, train_label, validation_label = \
-    train_test_split(data_T, label_T, test_size=0.2)
+train_input, validation_input, train_label, validation_label, train_timestamp, validation_timestamp = \
+    train_test_split(data_T, label_T, timestamp_T, test_size=0.2)
 
 if SUPERVISED:
     train_input = torch.from_numpy(train_input)
     train_label = torch.from_numpy(train_label)
+# if unsupervised, use first 5000 groups of data for training, and the rest for test
 else:
-    train_input = torch.from_numpy(data_T[0:n_tag_0])
-    train_label = torch.from_numpy(label_T[0:n_tag_0])
+    train_input = torch.from_numpy(data_T[0:5000])
+    train_label = torch.from_numpy(label_T[0:5000])
 train_data = torch.utils.data.TensorDataset(train_input, train_label)
 train_loader = torch.utils.data.DataLoader(train_data, batch_size=BATCH_SIZE, shuffle=True)
     
-validation_input = torch.from_numpy(validation_input)
-validation_label = torch.from_numpy(validation_label)
+if SUPERVISED:
+    validation_input = torch.from_numpy(validation_input)
+    validation_label = torch.from_numpy(validation_label)
+else:
+    validation_input = torch.from_numpy(data_T[5000:(n_tag_0 + n_tag_1)])
+    validation_label = torch.from_numpy(label_T[5000:(n_tag_0 + n_tag_1)])
+    validation_timestamp = timestamp_T[5000:(n_tag_0 + n_tag_1)]
 validation_data = torch.utils.data.TensorDataset(validation_input, validation_label)
-validation_loader = torch.utils.data.DataLoader(validation_data, batch_size=BATCH_SIZE, shuffle=True)
+validation_loader = torch.utils.data.DataLoader(validation_data, batch_size=BATCH_SIZE, shuffle=False)
 
 '''-------------------------------------------------------------------------'''
 '''------------------------------ create model -----------------------------'''
@@ -171,6 +177,7 @@ if TRAIN:
         cnn.load_state_dict(torch.load(pt_filename))
     '''
     best_valid_loss = float('inf')
+    best_f1 = 0.0
    
     for epoch in range(EPOCH):
         start_time = time.time()
@@ -180,7 +187,7 @@ if TRAIN:
             valid_loss, _, _, _ = CNN.evaluate(cnn, validation_loader, loss_func, device, epoch, NETWORK_TYPE)
         else:
             train_loss = CNN_unsupervised.train(cnn, train_loader, optimizer, loss_func, CLIP, device)
-            valid_loss, _, _, _ = CNN_unsupervised.evaluate(cnn, validation_loader, loss_func, device, epoch, NETWORK_TYPE)
+            valid_loss, _, _, _, f1 = CNN_unsupervised.evaluate(cnn, validation_loader, loss_func, device, epoch, NETWORK_TYPE)
             
         end_time = time.time()
         
@@ -189,9 +196,13 @@ if TRAIN:
         else:
             epoch_mins, epoch_secs = CNN_unsupervised.epoch_time(start_time, end_time)
         
-        # if valid_loss < best_valid_loss:
-        #     best_valid_loss = valid_loss
-        torch.save(cnn.state_dict(), pt_filename)
+        if (SUPERVISED and valid_loss < best_valid_loss):
+            best_valid_loss = valid_loss
+            torch.save(cnn.state_dict(), pt_filename)
+        # in unsupervised case use f1 to judge the goodness of model
+        if ((not SUPERVISED) and f1 > best_f1):
+            best_f1 = f1
+            torch.save(cnn.state_dict(), pt_filename)
         
         print(f'Epoch: {epoch+1:02} | Time: {epoch_mins}m {epoch_secs}s')
         print(f'\tTrain Loss: {train_loss:.5f}')
@@ -218,7 +229,7 @@ if EVALUATE:
     if SUPERVISED:
         valid_loss, accuracy, precision, recall = CNN.evaluate(cnn, validation_loader, loss_func, device, 59, NETWORK_TYPE)
     else:
-        valid_loss, accuracy, precision, recall = CNN_unsupervised.evaluate(cnn, validation_loader, loss_func, device, 59, NETWORK_TYPE)
+        valid_loss, accuracy, precision, recall = CNN_unsupervised.evaluate_complete(cnn, validation_loader, loss_func, device, 59, NETWORK_TYPE, validation_timestamp)
     
     end_time = time.time()
     
