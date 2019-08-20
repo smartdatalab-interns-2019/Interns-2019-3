@@ -13,6 +13,7 @@ import create_data_for_CNN
 
 import CNN                  # supervised
 import CNN_unsupervised     # unsupervised
+import CNN_reconstruct
 
 '''-------------------------------------------------------------------------'''
 '''------------------------------- function --------------------------------'''
@@ -103,10 +104,10 @@ BASELINE_FILE = 197
 BASELINE_MEASUREMENT = 1
 
 SUPERVISED = False
-NETWORK_TYPE = "2D_unsupervised"
+NETWORK_TYPE = "2D_reconstruct"
 
 SAVE_CREATED_DATA = True
-TRAIN = False
+TRAIN = True
 EVALUATE = not TRAIN
 
 pt_filename = 'pt/CNN_' + NETWORK_TYPE + '_predict_input.pt'
@@ -160,6 +161,8 @@ if SUPERVISED:
 else:
     if (NETWORK_TYPE == "2D_unsupervised"):
         cnn = CNN_unsupervised.CNNModel().to(device)
+    elif (NETWORK_TYPE == "2D_reconstruct"):
+        cnn = CNN_reconstruct.CNNModel().to(device)
     optimizer = torch.optim.Adam(cnn.parameters(), lr=LR)
     loss_func = nn.MSELoss()
 
@@ -182,12 +185,15 @@ if TRAIN:
     for epoch in range(EPOCH):
         start_time = time.time()
         
-        if SUPERVISED:
+        if (SUPERVISED):
             train_loss = CNN.train(cnn, train_loader, optimizer, loss_func, CLIP, device)
             valid_loss, _, _, _ = CNN.evaluate(cnn, validation_loader, loss_func, device, epoch, NETWORK_TYPE)
-        else:
+        elif (NETWORK_TYPE == "2D_unsupervised"):
             train_loss = CNN_unsupervised.train(cnn, train_loader, optimizer, loss_func, CLIP, device)
             valid_loss, _, _, _, f1 = CNN_unsupervised.evaluate(cnn, validation_loader, loss_func, device, epoch, NETWORK_TYPE)
+        elif (NETWORK_TYPE == "2D_reconstruct"):
+            train_loss = CNN_reconstruct.train(cnn, train_loader, optimizer, loss_func, CLIP, device)
+            valid_loss, _, _, _, f1 = CNN_reconstruct.evaluate(cnn, train_loader, validation_loader, loss_func, device, epoch, NETWORK_TYPE)
             
         end_time = time.time()
         

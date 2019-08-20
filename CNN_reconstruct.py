@@ -14,40 +14,37 @@ import matplotlib.pyplot as plt
 
 
 class CNNModel(nn.Module):
-    """A simple CNN with 2D convolutional layer
+    """A simple CNN-based autoencoder with 2D convolutional layer
 
     Attributes:
-        __init__: Create CNN with 2 hidden layers
+        __init__: Create encoder and decoder
         forward: Pass input to the network and get results from readout layer
     """
     def __init__(self):
         super(CNNModel, self).__init__()
-        # Hidden layers, use conv2d to process one 10 * 400 data matrix
-        self.hidden1 = nn.Sequential(OrderedDict([
+        # encoder, use conv2d to process one 10 * 400 data matrix
+        # output 32 * 5 * 200 data to decoder
+        self.encoder = nn.Sequential(OrderedDict([
             ("conv1", nn.Conv2d(in_channels=1, out_channels=16, kernel_size=5, stride=1, padding=2)),
             ("relu1", nn.ReLU()),
-            ("pool1", nn.MaxPool2d(kernel_size=2))
-        ]))
-        self.hidden2 = nn.Sequential(OrderedDict([
+            ("pool1", nn.MaxPool2d(kernel_size=2)),
             ("conv2", nn.Conv2d(in_channels=16, out_channels=32, kernel_size=3, stride=1, padding=1)),
             ("relu2", nn.ReLU()),
-            ("pool2", nn.MaxPool2d(kernel_size=2))
         ]))
-        # Fully connected layer (readout), receive output of 32(channels)*2(height)*100(width)
-        # The height of the output should be 2 since pooling layer rounds down output's shape
-        # Output a scalar implying the possibility of existence of mass
-        self.fc = nn.Linear(32 * 2 * 100, 1)
+        # decoder, just symmetric to encoder
+        # reconstruct 10 * 400 data from output of encoder
+        # output of one batch will be of shape (128, 10, 400) and the channel dimension is ignored since it's 1
+        self.decoder = nn.Sequential(OrderedDict([
+            ("deconv1", nn.ConvTranspose2d(in_channels=32, out_channels=16, kernel_size=3, stride=1, padding=1)),
+            ("relu3", nn.ReLU()),
+            ("upsample", nn.Upsample(scale_factor=2, mode="nearest")),
+            ("deconv2", nn.ConvTranspose2d(in_channels=16, out_channels=1, kernel_size=5, stride=1, padding=2)),
+            ("relu4", nn.ReLU()),
+        ]))
     
     def forward(self, x):
-        out = self.hidden1(x)
-        out = self.hidden2(out)
-        # Resize
-        # Original size: (128, 32, 2 * 100)
-        # out.size(0): 128
-        # New out size: (128, 32 * 2 * 100)
-        out = out.view(out.size(0), -1)
-
-        out = self.fc(out)
+        out = self.encoder(x)
+        out = self.decoder(out)
         return out
 
 
@@ -64,11 +61,11 @@ def train(model, iterator, optimizer, criterion, clip, device):
         
         src = batch[0].to(device)               # data of shape (128, 10, 400)
         src = torch.unsqueeze(src, dim=1)       # add channel dimension (becomes(128, 1, 10, 400))
-        trg = batch[1].to(device)               # label
         
-        res = model(src.float()).view(-1)       # reshape result from (128, 1) to (128) to match target shape
+        res = model(src.float()).view(-1, 10, 400)      # reshape result to match target shape
+        src = torch.squeeze(src)
                  
-        loss = criterion(res.float(), trg.float())      # MSE loss
+        loss = criterion(res.float(), src.float())      # MSE loss
         optimizer.zero_grad()                           # clear gradients for this training step
         loss.backward()                                 # backpropagation, compute gradients
         torch.nn.utils.clip_grad_norm_(model.parameters(), clip)
@@ -82,7 +79,7 @@ def train(model, iterator, optimizer, criterion, clip, device):
     return epoch_loss / len(iterator)
 
 
-def evaluate(model, iterator, criterion, device, epoch, network_type):
+def evaluate(model, iterator_train, iterator, criterion, device, epoch, network_type):
     
     # set model to evaluation mode
     model.eval()
@@ -91,35 +88,61 @@ def evaluate(model, iterator, criterion, device, epoch, network_type):
     epoch_loss = 0
 
     # threshold of two kinds of data
-    threshold = torch.tensor(0.01).to(device)
+    threshold = 50
     
     tp = 0.0
     tn = 0.0
     fp = 0.0
     fn = 0.0
+    loss_total = np.empty((0, 10))
     predicted_total = np.empty(0)
     target_total = np.empty(0)
 
+    # calculate baseline for test data regularization
     with torch.no_grad():
+        for i, batch in enumerate(iterator_train):
+            src = batch[0].to(device)               # data of shape (128, 10, 400)
+            src = torch.unsqueeze(src, dim=1)       # add channel dimension (becomes(128, 1, 10, 400))
+            trg = batch[1].to(device)               # label of shape (128, 10, 400)
+            
+            res = model(src.float()).view(-1, 10, 400)      # reshape result to match target shape
+            src = torch.squeeze(src)
+            
+            # record property-wise loss on training data in one batch
+            # the property wise loss of one training data is 400 loss value summed
+            loss_train = torch.abs(src.float() - res).to(device)
+            loss_train = torch.sum(loss_train, 2)
+            loss_total = np.concatenate((loss_total, loss_train.cpu().numpy()))
+
+        loss_total = loss_total.T
+        # now loss_total is of shape (10, train size)
+        # calculate property-wise loss mean and standard deviation matrix
+        loss_mean = np.mean(loss_total, 1)
+        loss_std = np.cov(loss_total)
+
         for i, batch in enumerate(iterator):
             src = batch[0].to(device)
             src = torch.unsqueeze(src, dim=1)
             trg = batch[1].long().to(device)
 
-            res = model(src.float()).view(-1)   # reshape from (128, 1) to (128) to match target shape
-            print("result: ", res)
+            res = model(src.float()).view(-1, 10, 400)   # reshape to match target shape
+            src = torch.squeeze(src)
 
-            # average loss of a batch
-            loss = criterion(res.float(), trg.float())
-            epoch_loss += loss.item()
+            # property-wise loss on test data in one batch
+            loss_test = torch.abs(src.float() - res).cpu().numpy()
+            loss_test = np.sum(loss_test, 2)
 
+            # normalize loss and predict
             # take no mass as positive for convenience
+            loss_final = np.ndarray(res.size()[0])
+            loss_test -= loss_mean
+            for j in range(res.size()[0]):
+                loss_final[j] = loss_test[j].dot(np.linalg.inv(loss_std)).dot(loss_test[j].T)
+            
             predicted = torch.ones(res.size()[0], dtype=torch.float).long().to(device)
-            for i in range(res.size()[0]):
-                if (torch.abs(res[i] - torch.tensor(1).to(device)) >= threshold):
-                    predicted[i] = 0
-            print("predicted: ", predicted)
-            print("target: ", trg)
+            for k in range(res.size()[0]):
+                if (np.abs(loss_final[k]) >= threshold):
+                    predicted[k] = 0
 
             tp += ((predicted == 1) & (trg == 1)).sum().item()
             tn += ((predicted == 0) & (trg == 0)).sum().item()
@@ -128,10 +151,10 @@ def evaluate(model, iterator, criterion, device, epoch, network_type):
             predicted_total = np.concatenate([predicted_total, predicted.cpu().numpy()])
             target_total = np.concatenate([target_total, trg.cpu().numpy()])
 
-    precision = 100 * tp / (tp + fp)
-    recall = 100 * tp / (tp + fn)
+    precision = 100 * tp / max((tp + fp), 1)
+    recall = 100 * tp / max((tp + fn), 1)
     accuracy = 100 * (tp + tn) / (tp + fp + tn + fn)
-    f1 = 2 * precision * recall / (precision + recall)
+    f1 = 2 * precision * recall / max((precision + recall), 1)
     
     predicted_total = predicted_total.astype("int32")
     target_total = target_total.astype("int32")
